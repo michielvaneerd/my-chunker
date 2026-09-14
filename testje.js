@@ -5,7 +5,7 @@ import { getEncoding } from "js-tiktoken";
 
 import { marked } from 'marked';
 
-const markdownText = await fs.readFile('./Full-Markdown.md', { encoding: 'utf8' });
+const markdownText = await fs.readFile('./file1.md', { encoding: 'utf8' });
 //console.log(markdownText);
 //process.exit();
 
@@ -21,11 +21,75 @@ function fromToken(token) {
     };
 }
 
+function lengthFunction(text) {
+    return enc.encode(text).length;
+}
+
+// een chunk moet bestaan uit een lijst van potentiele chunks, zolang de maxSize nog bereikt is, dan worden die toegevoegd.
+// als maxSize bereikt is, dan wordt een nieuwe chunk gemaakt met de laatste als eetrste potentiele chunk.
+// Als de eerste chunk te groot is, dan deze met newLines afkorten en als dat niet lukt dan op spaties, punten etc.
+// Of misschien andere tokens (text, list_item, etc.)
+
+const chunks = [];
+const chunkMaxSize = 512; // tokens if lengthFunction is given, otherwise string length.
+const currentChunk = [];
+
 let newMarkdown = [];
+
+//const tokenTypes = [];
+
+// const allowedTokens = [
+//     'paragraph',
+//     // 'list',
+//     // 'table',
+//     // 'heading',
+//     'blockquote'
+// ];
+
+// Child tokens are called before moving on to sibling tokens ==> elke token kan ook weer tokens hebben, dus zichzelf aanroepende functie is nodig.
+// Ik denk dat ik bij elke token alle child tokens door moet lopen en de laatste op moet slaan.
+// Vervolgens moet ik dan pas weer in actie bij de eerste token NA de laatste child token.
+
+let childTokensToIgnore = new Map();
+
+// TODO: tables, list_Items.
+
+const childItemNames = [
+    'tokens',
+    'items',
+    'rows',
+    'header'
+];
+
+function getChildTokensToIgnore(token) {
+    for (const propertyName of childItemNames) {
+        if (token[propertyName] && token[propertyName].length) {
+            for (const childToken of token[propertyName]) {
+                childTokensToIgnore.set(childToken, true);
+                for (const propertyNameChild of childItemNames) {
+                    if (childToken[propertyNameChild] && childToken[propertyNameChild].length) {
+                        getChildTokensToIgnore(childToken);
+                    }
+                }
+            }
+        }
+    }
+
+}
 
 // https://marked.js.org/using_pro
 const walkTokens = (token) => {
+    if (childTokensToIgnore.has(token)) {
+        return;
+    }
     //console.log(token);
+    getChildTokensToIgnore(token);
+
+
+    //return;
+    // Als de token een property tokens heeft, alleen dan meenemen! Nee klopt niet...
+    // Alleen BLOCK level tokens meenemen, want erna komen de inline level tokens die al deel uitmaken van de block level.
+    //return;
     switch (token.type) {
         case 'heading':
             if (headerStack.length === 0) {
@@ -44,7 +108,6 @@ const walkTokens = (token) => {
             }
             token.tokens[0].text = headerStack.map((value) => value.text).join(" / ");
             token.raw = '#'.repeat(token.depth) + ' ' + token.tokens[0].text;
-            //console.log(token.raw);
             newMarkdown.push(token.raw);
             break;
         case 'text':
@@ -54,6 +117,19 @@ const walkTokens = (token) => {
         case 'checkbox':
         case 'em':
         case 'strong':
+        case 'del':
+        case 'image':
+        case 'def':
+        case 'escape':
+            // Do nothing.
+            break;
+        case 'paragraph':
+        case 'hr':
+        case 'space':
+        case 'list':
+        case 'blockquote':
+        case 'code':
+            newMarkdown.push(token.raw);
             break;
         case 'table':
             // Return as a list for each row: - header1 = value1, header2 = value2, etc.
@@ -65,20 +141,28 @@ const walkTokens = (token) => {
                 }
                 rows.push(`- ${cols.join('; ')}`);
             }
-            //     //console.log(token.header.map((h) => h.text).join(', '));
-            //     //console.log(token.raw);
-            //console.log(rows.join("\n"));
-            newMarkdown.push(rows.join("\n"));
+            token.raw = rows.join("\n");
+            token.type = 'list';
+            delete token.rows;
+            delete token.header;
+            token.items = [];
+            newMarkdown.push(token.raw);
             break;
         default:
             //console.log(`${token.type} :: ${token.raw}`);
             //console.log(`${token.raw}`);
-            newMarkdown.push(token.raw);
+            //newMarkdown.push(token.raw);
+            console.log(token);
+            process.exit();
             break;
     }
+    //currentChunk.push(token.raw);
 };
 
 marked.use({ walkTokens });
+
+//console.log(markdownText);
+//process.exit();
 
 marked.parse(markdownText);
 console.log(newMarkdown.join(""));
@@ -86,13 +170,12 @@ console.log(newMarkdown.join(""));
 // Now chunk, because tables can now be over multiple pages, because we have headers AND values displayed in each row.
 // We only need to keep the last header in memory and always add this one to the current chunk.
 
-const chunks = [];
-const chunkMaxSize = 512; // tokens if lengthFunction is given, otherwise string length.
+
 
 
 
 //await fs.readFile('./test.md', { encoding: 'utf8' });
-await fs.writeFile('./test1.md', newMarkdown.join("\n"), { encoding: 'utf8' });
+//await fs.writeFile('./test1.md', newMarkdown.join("\n"), { encoding: 'utf8' });
 
 
 // async function splitMarkdown() {
