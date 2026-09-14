@@ -5,7 +5,9 @@ import { getEncoding } from "js-tiktoken";
 
 import { marked } from 'marked';
 
-const markdownText = await fs.readFile('./file1.md', { encoding: 'utf8' });
+const sourceFile = 'file1.md';
+
+const markdownText = await fs.readFile(sourceFile, { encoding: 'utf8' });
 //console.log(markdownText);
 //process.exit();
 
@@ -85,6 +87,9 @@ const walkTokens = (token) => {
     //console.log(token);
     getChildTokensToIgnore(token);
 
+    //console.log(token.type);
+    //return;
+
 
     //return;
     // Als de token een property tokens heeft, alleen dan meenemen! Nee klopt niet...
@@ -108,29 +113,29 @@ const walkTokens = (token) => {
             }
             token.tokens[0].text = headerStack.map((value) => value.text).join(" / ");
             token.raw = '#'.repeat(token.depth) + ' ' + token.tokens[0].text;
-            newMarkdown.push(token.raw);
+            //newMarkdown.push(token.raw);
             break;
-        case 'text':
-        case 'list_item':
-        case 'link':
-        case 'codespan':
-        case 'checkbox':
-        case 'em':
-        case 'strong':
-        case 'del':
-        case 'image':
-        case 'def':
-        case 'escape':
-            // Do nothing.
-            break;
-        case 'paragraph':
-        case 'hr':
-        case 'space':
-        case 'list':
-        case 'blockquote':
-        case 'code':
-            newMarkdown.push(token.raw);
-            break;
+        // case 'text':
+        // case 'list_item':
+        // case 'link':
+        // case 'codespan':
+        // case 'checkbox':
+        // case 'em':
+        // case 'strong':
+        // case 'del':
+        // case 'image':
+        // case 'def':
+        // case 'escape':
+        //     // Do nothing.
+        //     break;
+        // case 'paragraph':
+        // case 'hr':
+        // case 'space':
+        // case 'list':
+        // case 'blockquote':
+        // case 'code':
+        //     newMarkdown.push(token.raw);
+        //     break;
         case 'table':
             // Return as a list for each row: - header1 = value1, header2 = value2, etc.
             const rows = [];
@@ -146,17 +151,18 @@ const walkTokens = (token) => {
             delete token.rows;
             delete token.header;
             token.items = [];
-            newMarkdown.push(token.raw);
+            //newMarkdown.push(token.raw);
             break;
         default:
             //console.log(`${token.type} :: ${token.raw}`);
             //console.log(`${token.raw}`);
             //newMarkdown.push(token.raw);
-            console.log(token);
-            process.exit();
+            //console.log(token);
+            //process.exit();
             break;
     }
     //currentChunk.push(token.raw);
+    newMarkdown.push(token.raw);
 };
 
 marked.use({ walkTokens });
@@ -165,7 +171,7 @@ marked.use({ walkTokens });
 //process.exit();
 
 marked.parse(markdownText);
-console.log(newMarkdown.join(""));
+//console.log(newMarkdown.join(""));
 
 // Now chunk, because tables can now be over multiple pages, because we have headers AND values displayed in each row.
 // We only need to keep the last header in memory and always add this one to the current chunk.
@@ -175,7 +181,8 @@ console.log(newMarkdown.join(""));
 
 
 //await fs.readFile('./test.md', { encoding: 'utf8' });
-//await fs.writeFile('./test1.md', newMarkdown.join("\n"), { encoding: 'utf8' });
+await fs.writeFile(`converted-${sourceFile}`, newMarkdown.join(""), { encoding: 'utf8' });
+console.log('OK');
 
 
 // async function splitMarkdown() {
