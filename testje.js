@@ -2,14 +2,17 @@
 // import { MarkdownHeaderTextSplitter } from "@langchain/textsplitters";
 import fs from 'node:fs/promises';
 import { getEncoding } from "js-tiktoken";
-
 import { marked } from 'marked';
 
 const sourceFile = 'file1.md';
 
+// TODO:
+// 1. Config keepTablesComplete (if true, never chunk tables even if > maxChunkSize)
+// 2. Start header level, for example if you have 1 top level header and all headers fall below,
+// then maybe it doesn't make much sense to prepend header 1 to every other headers. So the use level 2 as level 1 etc.
+// 3. Config Max header level - for example if this is 3 then header level 4 and higher are just used as is.
+
 const markdownText = await fs.readFile(sourceFile, { encoding: 'utf8' });
-//console.log(markdownText);
-//process.exit();
 
 const enc = getEncoding("o200k_base");
 
@@ -27,34 +30,26 @@ function lengthFunction(text) {
     return enc.encode(text).length;
 }
 
-// een chunk moet bestaan uit een lijst van potentiele chunks, zolang de maxSize nog bereikt is, dan worden die toegevoegd.
-// als maxSize bereikt is, dan wordt een nieuwe chunk gemaakt met de laatste als eetrste potentiele chunk.
-// Als de eerste chunk te groot is, dan deze met newLines afkorten en als dat niet lukt dan op spaties, punten etc.
-// Of misschien andere tokens (text, list_item, etc.)
+// A chunk is an Object like
+const exampleChunk = {
+    headers: ['Header 1', 'Header 2'],
+    text: []
+};
+
+function newChunk() {
+    return {
+        headers: [...headerStack],
+        text: []
+    };
+}
 
 const chunks = [];
 const chunkMaxSize = 512; // tokens if lengthFunction is given, otherwise string length.
-const currentChunk = [];
+let currentChunk = null;
 
 let newMarkdown = [];
 
-//const tokenTypes = [];
-
-// const allowedTokens = [
-//     'paragraph',
-//     // 'list',
-//     // 'table',
-//     // 'heading',
-//     'blockquote'
-// ];
-
-// Child tokens are called before moving on to sibling tokens ==> elke token kan ook weer tokens hebben, dus zichzelf aanroepende functie is nodig.
-// Ik denk dat ik bij elke token alle child tokens door moet lopen en de laatste op moet slaan.
-// Vervolgens moet ik dan pas weer in actie bij de eerste token NA de laatste child token.
-
 let childTokensToIgnore = new Map();
-
-// TODO: tables, list_Items.
 
 const childItemNames = [
     'tokens',
@@ -63,16 +58,28 @@ const childItemNames = [
     'header'
 ];
 
+/**
+ * Walk throuhg all child tokens of the current token and add them to the
+ * childTokensToIgnore Map. The `walkTokens` callback of Marked
+ * is called for every single token, and walks through all child tokens first
+ * before going to the next sibling token. So for example a `paragraph` token
+ * is called first, and then the `text` token (which includes the same text as the paragraph).
+ * We only need to handle each token once, so that's why we add the child tokens to the ignore map.
+ * 
+ * @param {Token} token Token to walk through
+ */
 function getChildTokensToIgnore(token) {
     for (const propertyName of childItemNames) {
         if (token[propertyName] && token[propertyName].length) {
             for (const childToken of token[propertyName]) {
                 childTokensToIgnore.set(childToken, true);
-                for (const propertyNameChild of childItemNames) {
-                    if (childToken[propertyNameChild] && childToken[propertyNameChild].length) {
-                        getChildTokensToIgnore(childToken);
-                    }
-                }
+                // I think we can comment the next 2 for and if lines,
+                // because we already check this in the beginning of this function.
+                //for (const propertyNameChild of childItemNames) {
+                //    if (childToken[propertyNameChild] && childToken[propertyNameChild].length) {
+                getChildTokensToIgnore(childToken);
+                //    }
+                //}
             }
         }
     }
@@ -84,19 +91,16 @@ const walkTokens = (token) => {
     if (childTokensToIgnore.has(token)) {
         return;
     }
-    //console.log(token);
+
     getChildTokensToIgnore(token);
 
-    //console.log(token.type);
-    //return;
+    let headerChanged = false;
 
-
-    //return;
-    // Als de token een property tokens heeft, alleen dan meenemen! Nee klopt niet...
-    // Alleen BLOCK level tokens meenemen, want erna komen de inline level tokens die al deel uitmaken van de block level.
-    //return;
     switch (token.type) {
         case 'heading':
+            headerChanged = true;
+            // Headers are updated to reflex the hierarchy, so `## Header 2` becomes
+            // `## Header 1 / Header 2`.
             if (headerStack.length === 0) {
                 headerStack.push(fromToken(token));
             } else {
@@ -113,31 +117,9 @@ const walkTokens = (token) => {
             }
             token.tokens[0].text = headerStack.map((value) => value.text).join(" / ");
             token.raw = '#'.repeat(token.depth) + ' ' + token.tokens[0].text;
-            //newMarkdown.push(token.raw);
             break;
-        // case 'text':
-        // case 'list_item':
-        // case 'link':
-        // case 'codespan':
-        // case 'checkbox':
-        // case 'em':
-        // case 'strong':
-        // case 'del':
-        // case 'image':
-        // case 'def':
-        // case 'escape':
-        //     // Do nothing.
-        //     break;
-        // case 'paragraph':
-        // case 'hr':
-        // case 'space':
-        // case 'list':
-        // case 'blockquote':
-        // case 'code':
-        //     newMarkdown.push(token.raw);
-        //     break;
         case 'table':
-            // Return as a list for each row: - header1 = value1, header2 = value2, etc.
+            // We change a table to a list, where each list item consist of headername1=colvalue1;headername2=colvalue2 etc.
             const rows = [];
             for (const row of token.rows) {
                 const cols = [];
@@ -151,38 +133,41 @@ const walkTokens = (token) => {
             delete token.rows;
             delete token.header;
             token.items = [];
-            //newMarkdown.push(token.raw);
             break;
         default:
-            //console.log(`${token.type} :: ${token.raw}`);
-            //console.log(`${token.raw}`);
-            //newMarkdown.push(token.raw);
-            //console.log(token);
-            //process.exit();
             break;
     }
-    //currentChunk.push(token.raw);
+    // If we get here, the token.raw has the correct Markdown text.
     newMarkdown.push(token.raw);
+    // Manage the chunking
+    // 1. Always add the current header stack to it
+    // 2. Always start a new chunk when you encounter a new header
+    if (currentChunk === null) {
+        currentChunk = newChunk();
+    } else if (headerChanged) {
+        chunks.push({
+            headers: currentChunk.headers,
+            text: currentChunk.text
+        });
+        currentChunk = newChunk();
+    }
+    currentChunk.text.push(token.raw);
 };
 
 marked.use({ walkTokens });
 
-//console.log(markdownText);
-//process.exit();
-
+// This call triggers the walkTokens callback.
+// We are not interested in the returned HTML value.
 marked.parse(markdownText);
-//console.log(newMarkdown.join(""));
 
-// Now chunk, because tables can now be over multiple pages, because we have headers AND values displayed in each row.
-// We only need to keep the last header in memory and always add this one to the current chunk.
+// Add last chunk
+chunks.push({
+    headers: currentChunk.headers,
+    text: currentChunk.text
+});
 
-
-
-
-
-//await fs.readFile('./test.md', { encoding: 'utf8' });
-await fs.writeFile(`converted-${sourceFile}`, newMarkdown.join(""), { encoding: 'utf8' });
-console.log('OK');
+//await fs.writeFile(`converted-${sourceFile}`, newMarkdown.join(""), { encoding: 'utf8' });
+console.log(chunks);
 
 
 // async function splitMarkdown() {
